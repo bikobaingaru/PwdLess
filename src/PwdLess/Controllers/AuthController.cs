@@ -18,38 +18,47 @@ namespace PwdLess.Controllers
         private IAuthService _authService;
         private ISenderService _senderService;
         private ITemplateProcessor _templateProcessor;
+        private ICallbackService _callbackService;
         private IDistributedCache _cache;
         private ILogger _logger;
 
         public AuthController(IAuthService authService, 
             ISenderService senderService, 
             ITemplateProcessor templateProcessor, 
+            ICallbackService callbackService,
             IDistributedCache cache,
             ILogger<AuthController> logger)
         {
             _authService = authService;
             _senderService = senderService;
             _templateProcessor = templateProcessor;
+            _callbackService = callbackService;
             _cache = cache;
             _logger = logger;
         }
         
-        public async Task<IActionResult> SendNonce(string identifier)
+        public async Task<IActionResult> SendNonce(string identifier, string type = "default")
         {
             try
             {
                 // create a nonce/token pair, store them, get Nonce
-                var nonce = await _authService.CreateAndStoreNonce(identifier);
-                
-                // create body for message to be sent to user
-                var body = _templateProcessor.ProcessTemplate(nonce);
+                var nonce = await _authService.CreateAndStoreNonce(identifier, type);
 
-                // send message user
+                // run the BeforeSendingNonce callback, put result in message body
+                var extraBodyData = await _callbackService.BeforeSendingNonce(identifier, type) ?? "{}";
+
+                // create body for message to be sent to user & send it
+                var body = _templateProcessor.ProcessTemplate(nonce, extraBodyData, type);
                 await _senderService.SendAsync(identifier, body);
 
                 _logger.LogDebug($"A message was sent to: {identifier}. It contained the body: {body}.");
                 return Ok($"Success! Sent Nonce to: {identifier}.");
             }
+            catch (InvalidIdentifierException e)
+            {
+                _logger.LogError(e.ToString());
+                return BadRequest("Identifier invalid.");
+            }  
             catch (Exception e)
             {
                 _logger.LogError(e.ToString());
@@ -62,8 +71,11 @@ namespace PwdLess.Controllers
         {
             try
             {
-                // Get a Nonce's associated token
+                // get a Nonce's associated token
                 var token = await _authService.GetTokenFromNonce(nonce);
+
+                // run the BeforeSendingToken callback, discard result
+                await _callbackService.BeforeSendingToken(token);
 
                 _logger.LogDebug($"Nonce: {nonce}, token sent: {token}");
                 return Ok(token);
@@ -97,7 +109,7 @@ namespace PwdLess.Controllers
             }
             sb.Length--; // remove last comma
             sb.Append("\n}"); // add closing parens
-            sb.Replace("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier", "sub");
+            //sb.Replace("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier", "sub");
             var claimsJson = sb.ToString();
 
 

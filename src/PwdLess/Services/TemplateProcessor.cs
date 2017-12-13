@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Configuration;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -11,7 +12,7 @@ namespace PwdLess.Services
     /// </summary>
     public interface ITemplateProcessor
     {
-        string ProcessTemplate(string nonce);
+        string ProcessTemplate(string nonce, string extraBodyData, string type = "default");
     }
     
     public class EmailTemplateProcessor : ITemplateProcessor
@@ -22,9 +23,15 @@ namespace PwdLess.Services
             _config = config;
         }
 
-        public string ProcessTemplate(string nonce)
+        public string ProcessTemplate(string nonce, string extraBodyData, string type)
         {
-            var body = _config["PwdLess:EmailContents:Body"].Replace("{{nonce}}", nonce);
+
+            var body = _config[$"PwdLess:EmailContents:Body:{type}"]
+                .Replace("{{nonce}}", nonce);
+
+            foreach (var kvPair in JsonConvert.DeserializeObject<Dictionary<string, string>>(extraBodyData))
+                body = body.Replace($"{{{kvPair.Key}}}", kvPair.Value);
+
             return body;
         }
     }
